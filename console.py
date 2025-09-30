@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """ Console Module """
 import cmd
+import shlex
 import sys
 from models.base_model import BaseModel
 from models.__init__ import storage
@@ -114,17 +115,79 @@ class HBNBCommand(cmd.Cmd):
         pass
 
     def do_create(self, args):
-        """ Create an object of any class"""
+        """Create an object of any class with optional key=value attributes.
+
+        Supported value syntax:
+        - Strings: must be double-quoted. Underscores are converted to spaces.
+          Escaped quotes (\") are supported.
+        - Floats: contain a dot
+        - Integers: otherwise numeric
+        Any unrecognized parameter is skipped.
+        """
         if not args:
             print("** class name missing **")
             return
-        elif args not in HBNBCommand.classes:
+
+        try:
+            tokens = shlex.split(args)
+        except Exception:
+            tokens = args.split()
+
+        class_name = tokens[0] if tokens else None
+        if not class_name:
+            print("** class name missing **")
+            return
+        if class_name not in HBNBCommand.classes:
             print("** class doesn't exist **")
             return
-        new_instance = HBNBCommand.classes[args]()
-        storage.save()
+
+        new_instance = HBNBCommand.classes[class_name]()
+
+        # process key=value pairs
+        for token in tokens[1:]:
+            if '=' not in token:
+                continue
+            key, value = token.split('=', 1)
+            if not key:
+                continue
+            if key in {'id', 'created_at', 'updated_at'}:
+                continue
+
+            cast_value = None
+            # Attempt numeric casts first
+            if '.' in value:
+                try:
+                    cast_value = float(value)
+                except ValueError:
+                    cast_value = None
+            if cast_value is None:
+                if value.isdigit() or (value.startswith('-') and value[1:].isdigit()):
+                    try:
+                        cast_value = int(value)
+                    except ValueError:
+                        cast_value = None
+
+            # Fallback to string handling
+            if cast_value is None:
+                # value came from shlex without surrounding quotes; treat as string
+                # Convert underscores to spaces and unescape quotes
+                str_val = value.replace('_', ' ').replace('\\"', '"')
+                cast_value = str_val
+
+            # If a specific type is defined for the attribute, respect it
+            try:
+                if key in HBNBCommand.types and isinstance(cast_value, (str, int, float)):
+                    try:
+                        cast_value = HBNBCommand.types[key](cast_value)
+                    except Exception:
+                        continue
+                setattr(new_instance, key, cast_value)
+            except Exception:
+                # skip invalid attributes
+                continue
+
+        new_instance.save()
         print(new_instance.id)
-        storage.save()
 
     def help_create(self):
         """ Help information for the create method """
